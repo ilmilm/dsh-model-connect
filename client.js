@@ -29,6 +29,45 @@ window.__ModuleLoader__.load({
       { value: 'anthropic-messages', label: 'Anthropic Messages · /v1/messages' },
     ]
 
+    /** Route-level capability defaults (mirrors the host's defaults). */
+    const CAP_DEFAULTS = {
+      contextWindow: '1M',
+      maxTokens: '128K',
+      input: ['text', 'image'],
+      reasoningLevel: 'high',
+    }
+
+    /** Reasoning levels the pi-ai model schema accepts, ascending. */
+    const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+    /**
+     * Spell one capacity the way the form accepts it back.
+     * @param value - token count.
+     * @returns `1M`, `128K`, the plain number, or an empty string.
+     */
+    function capText(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
+      if (value % 1000000 === 0) return (value / 1000000) + 'M'
+      if (value % 1000 === 0) return (value / 1000) + 'K'
+      return String(value)
+    }
+
+    /**
+     * One-line capability summary for a provider row.
+     * @param models - the route's model entries (state payload shape).
+     * @returns e.g. `1M ctx · 128K out · text+image · high`.
+     */
+    function capSummary(models) {
+      const first = Array.isArray(models) && models.length > 0 ? models[0] : undefined
+      if (first === undefined || first === null) return ''
+      const parts = []
+      if (capText(first.contextWindow) !== '') parts.push(capText(first.contextWindow) + ' ctx')
+      if (capText(first.maxTokens) !== '') parts.push(capText(first.maxTokens) + ' out')
+      if (Array.isArray(first.input) && first.input.length > 0) parts.push(first.input.join('+'))
+      if (Array.isArray(first.reasoningLevels) && first.reasoningLevels.length > 0) parts.push(first.reasoningLevels.join('/'))
+      return parts.join(' · ')
+    }
+
     const COLOR = {
       bg: 'var(--dsw-alias-bg-base)',
       layer1: 'var(--dsw-alias-bg-layer-1)',
@@ -276,6 +315,23 @@ window.__ModuleLoader__.load({
         wordBreak: 'break-word',
       }),
       hint: { color: COLOR.dim, fontSize: 11.5, margin: 0 },
+      capHead: {
+        paddingTop: 12,
+        borderTop: '1px solid ' + COLOR.border,
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: COLOR.text,
+      },
+      checks: { display: 'flex', alignItems: 'center', gap: 16, height: 34 },
+      check: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 12.5,
+        color: COLOR.text,
+        cursor: 'pointer',
+        userSelect: 'none',
+      },
     }
 
     /**
@@ -319,7 +375,20 @@ window.__ModuleLoader__.load({
 
     /** Empty editor draft. */
     function emptyDraft() {
-      return { route: '', displayName: '', baseURL: '', api: PROTOCOLS[0].value, apiKey: '', models: '', editing: false }
+      return {
+        route: '',
+        displayName: '',
+        baseURL: '',
+        api: PROTOCOLS[0].value,
+        apiKey: '',
+        models: '',
+        editing: false,
+        contextWindow: CAP_DEFAULTS.contextWindow,
+        maxTokens: CAP_DEFAULTS.maxTokens,
+        inputText: true,
+        inputImage: true,
+        reasoningLevel: CAP_DEFAULTS.reasoningLevel,
+      }
     }
 
     /**
@@ -350,6 +419,7 @@ window.__ModuleLoader__.load({
       const onEdit = useCallback((row) => {
         setNotice(null)
         setProbed([])
+        const first = Array.isArray(row.models) && row.models.length > 0 ? row.models[0] : {}
         setDraft({
           route: row.route,
           displayName: row.displayName,
@@ -358,6 +428,13 @@ window.__ModuleLoader__.load({
           apiKey: '',
           models: row.models.map(model => model.id).join('\n'),
           editing: true,
+          contextWindow: capText(first.contextWindow) !== '' ? capText(first.contextWindow) : CAP_DEFAULTS.contextWindow,
+          maxTokens: capText(first.maxTokens) !== '' ? capText(first.maxTokens) : CAP_DEFAULTS.maxTokens,
+          inputText: Array.isArray(first.input) ? first.input.includes('text') : true,
+          inputImage: Array.isArray(first.input) ? first.input.includes('image') : true,
+          reasoningLevel: Array.isArray(first.reasoningLevels) && first.reasoningLevels.length > 0
+            ? first.reasoningLevels[0]
+            : CAP_DEFAULTS.reasoningLevel,
         })
       }, [])
 
@@ -394,10 +471,15 @@ window.__ModuleLoader__.load({
 
       const onSave = useCallback(async () => {
         if (busy !== '') return
+        if (!draft.inputText && !draft.inputImage) {
+          setNotice({ kind: 'err', text: t('至少保留一种输入模态（text / image）。', 'Keep at least one input modality (text / image).') })
+          return
+        }
         setBusy('save')
         setNotice(null)
         try {
           const models = draft.models.split(/[\n,]+/).map(id => id.trim()).filter(id => id !== '')
+          const input = [draft.inputText ? 'text' : null, draft.inputImage ? 'image' : null].filter(item => item !== null)
           const result = await call('POST', 'save', {
             route: draft.route,
             displayName: draft.displayName,
@@ -405,6 +487,10 @@ window.__ModuleLoader__.load({
             api: draft.api,
             apiKey: draft.apiKey,
             models,
+            contextWindow: draft.contextWindow,
+            maxTokens: draft.maxTokens,
+            input,
+            reasoningLevel: draft.reasoningLevel,
           })
           if (result && Array.isArray(result.providers)) setState({ phase: 'ready', data: result, error: '' })
           setDraft(previous => ({ ...previous, apiKey: '', editing: true }))
@@ -412,8 +498,8 @@ window.__ModuleLoader__.load({
           setNotice({
             kind: 'ok',
             text: zh
-              ? `已保存：${result.route ?? draft.route}（${models.length} 个模型，凭据引用 ${result.apiKeyEnv ?? '—'}）。模型会出现在输入框的模型选择器里。`
-              : `Saved ${result.route ?? draft.route} (${models.length} model(s), credential ${result.apiKeyEnv ?? '—'}). The models now appear in the composer model picker.`,
+              ? `已保存：${result.route ?? draft.route}（${models.length} 个模型 · ${draft.contextWindow} 上下文 / ${draft.maxTokens} 输出 · ${input.join('+')} · 强度 ${draft.reasoningLevel}，凭据引用 ${result.apiKeyEnv ?? '—'}）。模型会出现在输入框的模型选择器里。`
+              : `Saved ${result.route ?? draft.route} (${models.length} model(s) · ${draft.contextWindow} ctx / ${draft.maxTokens} out · ${input.join('+')} · reasoning ${draft.reasoningLevel}, credential ${result.apiKeyEnv ?? '—'}). The models now appear in the composer model picker.`,
           })
         } catch (error) {
           setNotice({
@@ -482,12 +568,17 @@ window.__ModuleLoader__.load({
                 h('div', { style: S.grow },
                   h('div', { style: S.name }, row.displayName + ' · ' + row.route),
                   h('div', { style: S.meta }, (row.models.length > 0 ? row.models.map(model => model.id).join(' · ') : t('未声明模型', 'no models')) + (row.registered ? '' : t('（未注册到运行时）', ' (route not mounted)')).slice(0, 400)),
-                  h('div', { style: S.meta }, row.baseURL + '  ·  ' + row.api)),
+                  h('div', { style: S.meta }, row.baseURL + '  ·  ' + row.api),
+                  capSummary(row.models) !== ''
+                    ? h('div', { style: S.meta }, capSummary(row.models))
+                    : null),
                 h('button', { type: 'button', style: S.secondary, onClick: () => onEdit(row) }, t('编辑', 'Edit')),
                 h('button', { type: 'button', style: S.ghost, onClick: () => { void onRemove(row) } }, t('删除', 'Remove'))))
       )
 
       const protocolOptions = PROTOCOLS.map(option => h('option', { key: option.value, value: option.value }, option.label))
+      const levelOptions = REASONING_LEVELS.map(level => h('option', { key: level, value: level },
+        level === 'off' ? t('不启用（不推理）', 'off (no reasoning)') : level))
 
       const editor = h(
         'div',
@@ -566,6 +657,62 @@ window.__ModuleLoader__.load({
             }),
             hint: t('可以先点「测试连接」自动拉取，再手工增删。', 'Use "Test connection" to pull the catalog, then edit by hand.'),
           }),
+          h('div', { style: S.capHead }, t('模型默认能力（保存时统一写入每个模型）', 'Model defaults (written into every model on save)')),
+          h('div', { style: S.grid2 },
+            h(Field, {
+              title: t('上下文窗口', 'Context window'),
+              control: h('input', {
+                style: S.input,
+                value: draft.contextWindow,
+                placeholder: CAP_DEFAULTS.contextWindow,
+                spellCheck: false,
+                autoComplete: 'off',
+                onChange: event => patch({ contextWindow: event.target.value }),
+              }),
+              hint: t('1M / 256K / 200000，K 与 M 按 1000 进制（与官方 Models 页一致）。',
+                '1M / 256K / 200000; K and M are decimal, same as the shipped Models page.'),
+            }),
+            h(Field, {
+              title: t('最大输出', 'Max output'),
+              control: h('input', {
+                style: S.input,
+                value: draft.maxTokens,
+                placeholder: CAP_DEFAULTS.maxTokens,
+                spellCheck: false,
+                autoComplete: 'off',
+                onChange: event => patch({ maxTokens: event.target.value }),
+              }),
+              hint: t('单次响应上限，默认 128K。', 'Per-response cap, 128K by default.'),
+            })),
+          h('div', { style: S.grid2 },
+            h(Field, {
+              title: t('输入模态', 'Input modalities'),
+              control: h('div', { style: S.checks },
+                h('label', { style: S.check },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: draft.inputText,
+                    onChange: event => patch({ inputText: event.target.checked }),
+                  }), 'text'),
+                h('label', { style: S.check },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: draft.inputImage,
+                    onChange: event => patch({ inputImage: event.target.checked }),
+                  }), 'image')),
+              hint: t('两个都勾 = 该模型支持看图；只勾 text 则隐藏图片输入。',
+                'Both ticked = the model accepts images; text only hides image input.'),
+            }),
+            h(Field, {
+              title: t('推理强度', 'Reasoning level'),
+              control: h('select', {
+                style: { ...S.input, paddingTop: 0, paddingBottom: 0 },
+                value: draft.reasoningLevel,
+                onChange: event => patch({ reasoningLevel: event.target.value }),
+              }, levelOptions),
+              hint: t('默认 high；选「不启用」则不写 reasoningEfforts，模型不推理。',
+                'Defaults to high; "off" omits reasoningEfforts so the model does not reason.'),
+            })),
           probed.length > 0
             ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
               probed.slice(0, 40).map(model => h('span', { key: model.id, style: S.badge }, model.id)))

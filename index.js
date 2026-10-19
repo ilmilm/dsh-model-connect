@@ -25,6 +25,18 @@ const BASE = '/model-connect/api'
 /** Accepted pi-ai protocols. */
 const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages']
 
+/** Reasoning levels the pi-ai model schema accepts, ascending. */
+const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/** Input modalities a model entry may declare. */
+const MODALITIES = ['text', 'image']
+
+/** Route-level capability defaults written into every saved model. */
+const DEFAULT_CONTEXT_WINDOW = '1M'
+const DEFAULT_MAX_TOKENS = '128K'
+const DEFAULT_INPUT = ['text', 'image']
+const DEFAULT_REASONING_LEVEL = 'high'
+
 /** Fallback settings namespace when the provider directory is empty. */
 const FALLBACK_NS = 'llm-pi-ai'
 
@@ -224,7 +236,16 @@ async function buildState(llm, settings, credentials) {
       registered: registered.has(route),
       models: models
         .filter(model => model && typeof model.id === 'string' && model.id !== '')
-        .map(model => ({ id: model.id, name: typeof model.name === 'string' ? model.name : model.id })),
+        .map(model => ({
+          id: model.id,
+          name: typeof model.name === 'string' ? model.name : model.id,
+          contextWindow: Number.isSafeInteger(model.contextWindow) ? model.contextWindow : undefined,
+          maxTokens: Number.isSafeInteger(model.maxTokens) ? model.maxTokens : undefined,
+          input: Array.isArray(model.input) ? model.input.filter(item => MODALITIES.includes(item)) : undefined,
+          reasoningLevels: model.reasoningEfforts && typeof model.reasoningEfforts === 'object'
+            ? Object.keys(model.reasoningEfforts)
+            : undefined,
+        })),
     })
   }
   rows.sort((a, b) => a.route.localeCompare(b.route))
@@ -233,6 +254,28 @@ async function buildState(llm, settings, credentials) {
     namespaces = (settings.describe() ?? []).map(descriptor => String(descriptor.ns))
   } catch { /* diagnostic only */ }
   return { ns, namespaces, protocols: PROTOCOLS, providers: rows }
+}
+
+/**
+ * Parse one capacity value (`1M`, `128K`, `200000`, or a plain number).
+ *
+ * `K` and `M` are decimal on purpose: that is what the shipped Models page
+ * means by them, so a value typed here and a value typed there agree.
+ * @param value - candidate capacity.
+ * @returns the token count, or undefined when the value is unusable.
+ */
+function toCapacity(value) {
+  const text = typeof value === 'number'
+    ? String(value)
+    : typeof value === 'string'
+      ? value.trim().toUpperCase().replace(/[\s_]/g, '')
+      : ''
+  if (text === '') return undefined
+  const match = /^([0-9]+(?:\.[0-9]+)?)([KM])?$/.exec(text)
+  if (match === null) return undefined
+  const factor = match[2] === 'K' ? 1000 : match[2] === 'M' ? 1000000 : 1
+  const total = Math.round(Number(match[1]) * factor)
+  return Number.isSafeInteger(total) && total > 0 && total <= 10000000 ? total : undefined
 }
 
 /**
@@ -260,7 +303,21 @@ function normalizeSave(body) {
   if (models.length === 0) return { ok: false, error: '至少需要一个模型 ID' }
   const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
   if (apiKey !== '' && !/^[\x21-\x7E]+$/.test(apiKey)) return { ok: false, error: 'API Key 只能包含可见 ASCII 字符' }
-  return { ok: true, value: { route, baseURL, api, displayName, models, apiKey } }
+  const contextWindow = toCapacity(body.contextWindow === undefined || body.contextWindow === '' ? DEFAULT_CONTEXT_WINDOW : body.contextWindow)
+  if (contextWindow === undefined) return { ok: false, error: '上下文窗口需形如 1M / 256K / 200000（上限 10M）' }
+  const maxTokens = toCapacity(body.maxTokens === undefined || body.maxTokens === '' ? DEFAULT_MAX_TOKENS : body.maxTokens)
+  if (maxTokens === undefined) return { ok: false, error: '最大输出需形如 128K / 32000（上限 10M）' }
+  const requested = Array.isArray(body.input) ? body.input.filter(item => MODALITIES.includes(item)) : DEFAULT_INPUT
+  const input = [...new Set(requested)]
+  if (input.length === 0) return { ok: false, error: '至少保留一种输入模态（text / image）' }
+  const reasoningLevel = typeof body.reasoningLevel === 'string' ? body.reasoningLevel : DEFAULT_REASONING_LEVEL
+  if (reasoningLevel !== 'off' && !REASONING_LEVELS.includes(reasoningLevel)) {
+    return { ok: false, error: `推理强度只能是 ${REASONING_LEVELS.join(' / ')}` }
+  }
+  return {
+    ok: true,
+    value: { route, baseURL, api, displayName, models, apiKey, contextWindow, maxTokens, input, reasoningLevel },
+  }
 }
 
 /**
@@ -345,15 +402,25 @@ export function apply(ctx) {
         if (settings === undefined) throw new Error('settings 服务不可用')
         const check = normalizeSave(body)
         if (!check.ok) return { status: 400, body: { error: check.error } }
-        const { route, baseURL, api, displayName, models, apiKey } = check.value
+        const { route, baseURL, api, displayName, models, apiKey, contextWindow, maxTokens, input, reasoningLevel } = check.value
         const ns = resolveNamespace(llmOf(), settings)
         const { providers } = readSection(settings, ns)
         const previous = providers[route] && typeof providers[route] === 'object' ? providers[route] : {}
         const previousModels = Array.isArray(previous.models) ? previous.models : []
         const mergedModels = models.map(id => {
           const kept = previousModels.find(model => model && model.id === id)
-          if (kept && typeof kept === 'object') return { ...kept, id, name: typeof kept.name === 'string' && kept.name !== '' ? kept.name : id }
-          return { id, name: id }
+          const base = kept && typeof kept === 'object' ? { ...kept } : {}
+          const entry = {
+            ...base,
+            id,
+            name: typeof base.name === 'string' && base.name !== '' ? base.name : id,
+            contextWindow,
+            maxTokens,
+            input: [...input],
+          }
+          if (reasoningLevel === 'off') delete entry.reasoningEfforts
+          else entry.reasoningEfforts = { [reasoningLevel]: reasoningLevel }
+          return entry
         })
         const ref = typeof previous.apiKeyEnv === 'string' && previous.apiKeyEnv !== '' ? previous.apiKeyEnv : credentialRefOf(route)
         const next = {

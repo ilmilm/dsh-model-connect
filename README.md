@@ -24,6 +24,7 @@ no `cordis.yml` surgery, no restart.
 - **模型探测**：填好 Base URL 与 Key，点「探测模型」即调用 LLM 服务的 `discoverModels` 拿回模型清单，自动回填模型 ID。
 - **路由保存**：写入 `llm-pi-ai` 命名空间的 `providers.<route>`，规则与官方 Models 设置页完全一致（`providers` 是易变字段）。
 - **Key 安全**：API Key 只写进 `credentials` 服务，引用名形如 `<ROUTE>_API_KEY`，**不会**落进 `cordis.patch.yml`。
+- **模型能力**：保存时统一写入每个模型条目的上下文窗口、最大输出、输入模态与推理强度（默认 `1M` / `128K` / `text+image` / `high`），不再吃适配器兜底值。
 - **编辑 / 删除**：已有路由可原地改写 Base URL、协议、模型集合；删除时可选择是否连带清除凭据。
 - **原生观感**：全部使用 `--dsw-alias-*` 设计令牌，跟随主题与深浅色；中英文按当前 locale 自动切换。
 
@@ -89,6 +90,20 @@ dsh plugin --profile desktop add C:\path\to\model-connect
 4. 勾选要启用的模型 → 保存；
 5. 保存后该路由在原 Models 设置页与模型选择器里立即可见。
 
+### 模型能力默认值
+
+| 面板字段 | 默认 | 写入 `providers.<route>.models[]` |
+| --- | --- | --- |
+| 上下文窗口 | `1M`（1000000） | `contextWindow` |
+| 最大输出 | `128K`（128000） | `maxTokens` |
+| 输入模态 | `text` + `image` 都勾选 | `input: ['text', 'image']` |
+| 推理强度 | `high` | `reasoningEfforts: { high: 'high' }` |
+
+- `K` / `M` 按 **1000 进制**，与官方 Models 页一致：`1M` = 1000000，`128K` = 128000。
+- 推理强度选「不启用」→ 不写 `reasoningEfforts`，模型不推理，选择器里也不出现强度档。
+- 保存时这四项**统一覆盖**该路由下所有模型；编辑已有路由时用第一个模型的值回填表单。
+- 字段留空按上面的默认值写入，不会退回适配器兜底。
+
 ### Host HTTP 路由
 
 所有特权操作都在 Host 半，浏览器半通过下面四条同源路由访问（仅回环地址可调）：
@@ -129,6 +144,7 @@ page does, but reachable from the left rail and with a live model probe.
 - **Live model probe** — enter a base URL and key, hit *Probe*, and the panel calls the LLM service's `discoverModels` to populate the model list.
 - **Route persistence** — writes `providers.<route>` in the `llm-pi-ai` settings namespace, following the exact rules of the shipped Models page (`providers` is a volatile field).
 - **Key handling** — the API key is written to the `credentials` service only, under a `<ROUTE>_API_KEY` reference; it never lands in `cordis.patch.yml`.
+- **Model capabilities** — every saved model entry gets an explicit context window, max output, input modalities and reasoning level (defaults `1M` / `128K` / `text+image` / `high`) instead of falling back to adapter-level defaults.
 - **Edit / remove** — existing routes can be updated in place (base URL, protocol, model set); removal can optionally delete the stored credential.
 - **Native look** — every colour comes from `--dsw-alias-*` design tokens, so it follows the active theme; copy switches between Chinese and English by locale.
 
@@ -195,6 +211,20 @@ Restart DSH (or reload the profile); the *Model Connect* row appears on the left
 3. Enter the **API key** and click *Probe models*.
 4. Tick the models to enable, then save.
 5. The route shows up immediately in the shipped Models page and the model picker.
+
+### Capability defaults
+
+| Panel field | Default | Written into `providers.<route>.models[]` |
+| --- | --- | --- |
+| Context window | `1M` (1000000) | `contextWindow` |
+| Max output | `128K` (128000) | `maxTokens` |
+| Input modalities | `text` + `image` ticked | `input: ['text', 'image']` |
+| Reasoning level | `high` | `reasoningEfforts: { high: 'high' }` |
+
+- `K` / `M` are decimal, same as the shipped Models page: `1M` = 1000000, `128K` = 128000.
+- Reasoning "off" omits `reasoningEfforts` entirely — the model does not reason and the picker offers no level.
+- On save these four values overwrite every model of that route; editing an existing route prefills the form from its first stored model.
+- A blank field falls back to the default above rather than to the adapter's own fallback.
 
 ### Host routes
 
