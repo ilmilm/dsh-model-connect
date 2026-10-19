@@ -115,8 +115,6 @@ dsh plugin --profile desktop add C:\path\to\model-connect
 
 ---
 
-<a id="english"></a>
-
 ## English
 
 A sidebar entry plus a full-page panel inside the DeepSeek Harness (DSH) Web UI
