@@ -685,9 +685,9 @@ window.__ModuleLoader__.load({
               hint: t('单次响应上限，默认 128K。', 'Per-response cap, 128K by default.'),
             })),
           h('div', { style: S.grid2 },
-            h(Field, {
-              title: t('输入模态', 'Input modalities'),
-              control: h('div', { style: S.checks },
+            h('div', { style: S.label },
+              h('span', { style: S.fieldLabel }, t('输入模态', 'Input modalities')),
+              h('div', { style: S.checks },
                 h('label', { style: S.check },
                   h('input', {
                     type: 'checkbox',
@@ -700,9 +700,8 @@ window.__ModuleLoader__.load({
                     checked: draft.inputImage,
                     onChange: event => patch({ inputImage: event.target.checked }),
                   }), 'image')),
-              hint: t('两个都勾 = 该模型支持看图；只勾 text 则隐藏图片输入。',
-                'Both ticked = the model accepts images; text only hides image input.'),
-            }),
+              h('span', { style: S.hint }, t('两个都勾 = 该模型支持看图；只勾 text 则隐藏图片输入。',
+                'Both ticked = the model accepts images; text only hides image input.'))),
             h(Field, {
               title: t('推理强度', 'Reasoning level'),
               control: h('select', {
