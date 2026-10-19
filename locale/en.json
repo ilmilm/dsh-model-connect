@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model Connect",
+    "description": "Sidebar panel for adding a third-party OpenAI/Anthropic compatible endpoint with its API key, probing its models, and saving them as selectable routes."
+  }
+}

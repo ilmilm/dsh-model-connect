@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Model Connect">
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#1f6feb"/>
+  <path d="M24 18v10M40 18v10" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <rect x="18" y="28" width="28" height="16" rx="6" fill="#ffffff"/>
+  <path d="M32 44v6" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="26" cy="36" r="2.4" fill="#1f6feb"/>
+  <circle cx="38" cy="36" r="2.4" fill="#1f6feb"/>
+</svg>

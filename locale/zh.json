@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "模型接入",
+    "description": "侧边栏面板：填写第三方 OpenAI / Anthropic 兼容端点与 API Key，探测模型列表并保存为可用模型。"
+  }
+}

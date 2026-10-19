@@ -1,0 +1,3 @@
+- insert:
+    - id: model-connect
+      name: '@local/dsh-model-connect'
