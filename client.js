@@ -241,6 +241,66 @@ window.__ModuleLoader__.load({
         color: COLOR.dim,
         whiteSpace: 'nowrap',
       },
+      stack: { display: 'flex', flexDirection: 'column', gap: 8 },
+      inline: { display: 'flex', alignItems: 'center', gap: 8 },
+      chips: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        padding: 8,
+        borderRadius: 8,
+        border: '1px solid ' + COLOR.border,
+        background: COLOR.bg,
+        boxSizing: 'border-box',
+        minHeight: 40,
+      },
+      chip: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 2,
+        padding: '2px 3px 2px 8px',
+        borderRadius: 6,
+        background: COLOR.layer2,
+        border: '1px solid ' + COLOR.border,
+        fontSize: 11.5,
+        color: COLOR.text,
+        whiteSpace: 'nowrap',
+      },
+      chipX: {
+        width: 17,
+        height: 17,
+        padding: 0,
+        borderRadius: 4,
+        border: 'none',
+        background: 'transparent',
+        color: COLOR.dim,
+        fontSize: 13,
+        lineHeight: '15px',
+        cursor: 'pointer',
+      },
+      emptyBox: {
+        padding: '10px 12px',
+        borderRadius: 8,
+        border: '1px dashed ' + COLOR.border,
+        background: COLOR.bg,
+        fontSize: 11.5,
+        color: COLOR.dim,
+      },
+      pullBox: { border: '1px solid ' + COLOR.border, borderRadius: 10, overflow: 'hidden', background: COLOR.layer1 },
+      toolbar: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        padding: '8px 10px',
+        borderBottom: '1px solid ' + COLOR.border,
+      },
+      toolTitle: { fontSize: 12.5, fontWeight: 600, marginRight: 'auto' },
+      pullList: { maxHeight: 216, overflowY: 'auto', padding: '4px 0' },
+      pullRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', fontSize: 12 },
+      pullName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      pullMeta: { color: COLOR.dim, fontSize: 11, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+
       label: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: COLOR.dim },
       fieldLabel: { color: COLOR.text, fontSize: 12.5, fontWeight: 500 },
       input: {
@@ -373,6 +433,24 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * Split the editor's model text into ids.
+     * @param value - newline or comma separated model ids.
+     * @returns the trimmed ids.
+     */
+    function parseModels(value) {
+      return String(value ?? '').split(/[\n,]+/).map(id => id.trim()).filter(id => id !== '')
+    }
+
+    /**
+     * Serialize model ids back into the editor's text form, de-duplicated.
+     * @param list - model ids.
+     * @returns newline separated ids.
+     */
+    function joinModels(list) {
+      return [...new Set(list)].join('\n')
+    }
+
     /** Empty editor draft. */
     function emptyDraft() {
       return {
@@ -402,6 +480,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState('')
       const [notice, setNotice] = useState(null)
       const [probed, setProbed] = useState([])
+      const [checked, setChecked] = useState([])
+      const [testResults, setTestResults] = useState([])
+      const [adding, setAdding] = useState('')
 
       const load = useCallback(async () => {
         try {
@@ -419,6 +500,9 @@ window.__ModuleLoader__.load({
       const onEdit = useCallback((row) => {
         setNotice(null)
         setProbed([])
+        setChecked([])
+        setTestResults([])
+        setAdding('')
         const first = Array.isArray(row.models) && row.models.length > 0 ? row.models[0] : {}
         setDraft({
           route: row.route,
@@ -441,6 +525,9 @@ window.__ModuleLoader__.load({
       const onReset = useCallback(() => {
         setDraft(emptyDraft())
         setProbed([])
+        setChecked([])
+        setTestResults([])
+        setAdding('')
         setNotice(null)
       }, [])
 
@@ -459,11 +546,13 @@ window.__ModuleLoader__.load({
           })
           const models = Array.isArray(result.models) ? result.models : []
           setProbed(models)
-          if (models.length > 0) patch({ models: models.map(model => model.id).join('\n') })
+          // Pulling adopts nothing: the user ticks what they want.
+          setChecked([])
+          setTestResults([])
           setNotice({
             kind: models.length > 0 ? 'ok' : 'warn',
             text: models.length > 0
-              ? (zh ? `连通正常，端点返回 ${models.length} 个模型，已填入模型列表。` : `Endpoint reachable, ${models.length} model(s) returned and filled in.`)
+              ? (zh ? `拉取成功，返回 ${models.length} 个模型。默认不勾选，挑好后再点「加入已选」。` : `Pulled ${models.length} model(s). Nothing is ticked by default — tick what you need, then Add selected.`)
               : (zh ? '端点可访问但没有返回模型，请手动填写模型 ID。' : 'Endpoint reachable but returned no models; enter model ids manually.'),
           })
         } catch (error) {
@@ -475,6 +564,60 @@ window.__ModuleLoader__.load({
           setBusy('')
         }
       }, [busy, draft.baseURL, draft.api, draft.apiKey, draft.editing, draft.route, patch, zh])
+
+      const selectedModels = parseModels(draft.models)
+
+      const toggleCheck = useCallback((id) => {
+        setChecked(previous => previous.includes(id) ? previous.filter(item => item !== id) : [...previous, id])
+      }, [])
+
+      const addChecked = useCallback(() => {
+        if (checked.length === 0) return
+        setDraft(previous => ({ ...previous, models: joinModels([...parseModels(previous.models), ...checked]) }))
+        setTestResults([])
+      }, [checked])
+
+      const removeModel = useCallback((id) => {
+        setDraft(previous => ({ ...previous, models: joinModels(parseModels(previous.models).filter(item => item !== id)) }))
+        setTestResults([])
+      }, [])
+
+      const addManual = useCallback(() => {
+        const id = adding.trim()
+        if (id === '') return
+        setDraft(previous => ({ ...previous, models: joinModels([...parseModels(previous.models), id]) }))
+        setAdding('')
+        setTestResults([])
+      }, [adding])
+
+      const onTest = useCallback(async () => {
+        if (busy !== '') return
+        const models = parseModels(draft.models)
+        if (models.length === 0) {
+          setNotice({ kind: 'err', text: t('先在「已选模型」里挑至少一个再测试。', 'Pick at least one selected model before testing.') })
+          return
+        }
+        setBusy('test')
+        setNotice(null)
+        setTestResults([])
+        try {
+          // ensure: a model the route does not declare yet cannot be called at
+          // all, so the host stores the ticked ids before testing them.
+          const result = await call('POST', 'test', { route: draft.route.trim(), models, ensure: true })
+          const rows = Array.isArray(result.results) ? result.results : []
+          setTestResults(rows)
+          const passed = rows.filter(row => row.ok).length
+          setNotice({
+            kind: passed === rows.length ? 'ok' : 'warn',
+            text: t('测试完成：' + passed + ' / ' + rows.length + ' 通过。', 'Tested ' + passed + ' / ' + rows.length + ' ok.')
+              + (result.ensured === true ? t('（新勾选的模型已顺带并入路由，否则运行时无法调用）', ' (New models were added to the route first, or they could not be called at all)') : ''),
+          })
+        } catch (error) {
+          setNotice({ kind: 'err', text: t('测试失败：', 'test failed: ') + (error instanceof Error ? error.message : String(error)) })
+        } finally {
+          setBusy('')
+        }
+      }, [busy, draft.models, draft.route, zh])
 
       const onSave = useCallback(async () => {
         if (busy !== '') return
@@ -545,8 +688,8 @@ window.__ModuleLoader__.load({
         null,
         h('h1', { style: S.title }, t('模型接入', 'Model Connect')),
         h('p', { style: S.sub },
-          t('填写第三方 OpenAI / Anthropic 兼容端点，测试连通后保存。Key 只写进本地凭据库，不会出现在配置文件里。',
-            'Add a third-party OpenAI/Anthropic compatible endpoint and save it. The key is stored in the local credential store, never in config files.')),
+          t('先拉取模型、再勾选要用的那几个，然后测试、保存。Key 只写进本地凭据库，不会出现在配置文件里。',
+            'Pull the catalog, tick only the models you want, then test and save. The key is stored in the local credential store, never in config files.')),
       )
 
       const stateCard = h(
@@ -654,15 +797,30 @@ window.__ModuleLoader__.load({
               hint: t('只写入本地凭据库，配置文件里只留引用名。', 'Written to the local credential store only; config keeps the reference name.'),
             })),
           h(Field, {
-            title: t('模型列表（每行一个）', 'Models (one per line)'),
-            control: h('textarea', {
-              style: S.textarea,
-              value: draft.models,
-              placeholder: 'deepseek-v4.1-flash\nglm-5.3',
-              spellCheck: false,
-              onChange: event => patch({ models: event.target.value }),
-            }),
-            hint: t('可以先点「测试连接」自动拉取，再手工增删。', 'Use "Test connection" to pull the catalog, then edit by hand.'),
+            title: t('已选模型（保存时写入每个模型）', 'Selected models (written on save)'),
+            control: h('div', { style: S.stack },
+              selectedModels.length === 0
+                ? h('div', { style: S.emptyBox }, t('还没有模型。先在下面「拉取模型」再勾选，或直接手动输入 ID。', 'No model yet — pull below and tick, or type an id.'))
+                : h('div', { style: S.chips }, selectedModels.map(id => h('span', { key: id, style: S.chip },
+                  h('span', null, id),
+                  h('button', {
+                    type: 'button',
+                    style: S.chipX,
+                    title: t('移除这个模型', 'Remove this model'),
+                    onClick: () => removeModel(id),
+                  }, '×')))),
+              h('div', { style: S.inline },
+                h('input', {
+                  style: { ...S.input, flex: 1 },
+                  value: adding,
+                  placeholder: t('手动添加模型 ID', 'Add a model id'),
+                  spellCheck: false,
+                  autoComplete: 'off',
+                  onChange: event => setAdding(event.target.value),
+                  onKeyDown: event => { if (event.key === 'Enter') { event.preventDefault(); addManual() } },
+                }),
+                h('button', { type: 'button', style: { ...S.secondary, height: 34 }, onClick: addManual }, t('添加', 'Add')))),
+            hint: t('点 × 删掉选错的模型。测试和保存都只针对这里列出的模型。', 'Drop a wrong pick with ×. Testing and saving only cover the models listed here.'),
           }),
           h('div', { style: S.capHead }, t('模型默认能力（保存时统一写入每个模型）', 'Model defaults (written into every model on save)')),
           h('div', { style: S.grid2 },
@@ -720,23 +878,50 @@ window.__ModuleLoader__.load({
                 'Defaults to high; "off" omits reasoningEfforts so the model does not reason.'),
             })),
           probed.length > 0
-            ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-              probed.slice(0, 40).map(model => h('span', { key: model.id, style: S.badge }, model.id)))
+            ? h('div', { style: S.pullBox },
+              h('div', { style: S.toolbar },
+                h('span', { style: S.toolTitle }, t('拉取结果', 'Pulled models') + ' · ' + probed.length),
+                h('span', { style: S.pullMeta }, t('已勾选 ' + checked.length + ' / ' + probed.length, checked.length + ' / ' + probed.length + ' ticked')),
+                h('button', { type: 'button', style: S.secondary, onClick: () => setChecked(probed.map(model => model.id)) }, t('全选', 'Select all')),
+                h('button', { type: 'button', style: S.secondary, onClick: () => setChecked([]) }, t('全不选', 'Select none')),
+                h('button', { type: 'button', style: { ...S.primary, height: 30 }, disabled: checked.length === 0, onClick: addChecked }, t('加入已选', 'Add selected'))),
+              h('div', { style: S.pullList },
+                probed.map(model => h('label', { key: model.id, style: S.pullRow },
+                  h('input', { type: 'checkbox', checked: checked.includes(model.id), onChange: () => toggleCheck(model.id) }),
+                  h('span', { style: S.pullName }, model.id + (model.name && model.name !== model.id ? '  ·  ' + model.name : '')),
+                  selectedModels.includes(model.id) ? h('span', { style: S.badge }, t('已加入', 'added')) : null))))
+            : null,
+          testResults.length > 0
+            ? h('div', { style: S.pullBox },
+              h('div', { style: S.toolbar },
+                h('span', { style: S.toolTitle }, t('测试结果', 'Test results') + ' · ' + testResults.filter(row => row.ok).length + ' / ' + testResults.length),
+                h('button', { type: 'button', style: S.secondary, onClick: () => setTestResults([]) }, t('清空', 'Clear'))),
+              h('div', { style: S.pullList },
+                testResults.map(row => h('div', { key: row.model, style: S.pullRow },
+                  h('span', { style: S.dot(row.ok ? COLOR.ok : COLOR.error) }),
+                  h('span', { style: S.pullName }, row.model + '  ·  ' + (row.ok ? t('通过', 'ok') : t('失败', 'failed')) + '  ·  ' + (row.ms ?? 0) + 'ms'),
+                  h('span', { style: S.pullMeta, title: row.ok ? (row.sample ?? '') : (row.error ?? '') }, row.ok ? (row.sample ?? '') : (row.error ?? ''))))))
             : null,
           notice !== null ? h('div', { style: S.notice(notice.kind) }, notice.text) : null,
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
             h('button', {
               type: 'button',
-              style: { ...S.secondary, height: 32, opacity: busy === '' ? 1 : 0.55 },
+              style: { ...S.primary, opacity: busy === '' ? 1 : 0.55 },
               disabled: busy !== '',
               onClick: () => { void onProbe() },
-            }, busy === 'probe' ? t('正在连接…', 'Probing…') : t('测试连接 / 拉取模型', 'Test connection / pull models')),
+            }, busy === 'probe' ? t('正在拉取…', 'Pulling…') : t('① 拉取模型', '1. Pull models')),
+            h('button', {
+              type: 'button',
+              style: { ...S.secondary, height: 32, opacity: busy === '' && selectedModels.length > 0 ? 1 : 0.55 },
+              disabled: busy !== '' || selectedModels.length === 0,
+              onClick: () => { void onTest() },
+            }, busy === 'test' ? t('正在测试…', 'Testing…') : t('② 测试已选模型', '2. Test selected')),
             h('button', {
               type: 'button',
               style: { ...S.primary, opacity: busy === '' ? 1 : 0.55 },
               disabled: busy !== '',
               onClick: () => { void onSave() },
-            }, busy === 'save' ? t('保存中…', 'Saving…') : t('保存并启用', 'Save & enable'))))
+            }, busy === 'save' ? t('保存中…', 'Saving…') : t('③ 保存并启用', '3. Save & enable'))))
       )
 
       return h('div', { style: S.page, 'data-dsh-model-connect': '' },

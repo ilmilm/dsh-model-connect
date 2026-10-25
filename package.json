@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-model-connect",
-  "version": "1.1.1",
+  "version": "1.2.2",
   "private": true,
   "type": "module",
   "description": "Sidebar panel for adding third-party OpenAI/Anthropic compatible endpoints and API keys, probing their model catalog, and saving them as dsh-llm-pi-ai routes.",

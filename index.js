@@ -37,6 +37,16 @@ const DEFAULT_MAX_TOKENS = '128K'
 const DEFAULT_INPUT = ['text', 'image']
 const DEFAULT_REASONING_LEVEL = 'high'
 
+/**
+ * Prompt for the connection test. A neutral instruction on purpose: relays
+ * that block conversational openings still answer it, and it never looks
+ * like a chat the endpoint may refuse to serve.
+ */
+const TEST_PROMPT = 'Reply with the single word ok, nothing else.'
+
+/** Ceiling for one model's connection test. */
+const TEST_TIMEOUT_MS = 45000
+
 /** Fallback settings namespace when the provider directory is empty. */
 const FALLBACK_NS = 'llm-pi-ai'
 
@@ -417,6 +427,81 @@ export function apply(ctx) {
             })),
           },
         }
+      }),
+    },
+    {
+      kind: 'exact',
+      path: `${BASE}/test`,
+      handler: guarded('POST', async (_url, body) => {
+        const llm = llmOf()
+        if (llm === undefined) throw new Error('llm 服务不可用')
+        const route = typeof body.route === 'string' ? body.route.trim() : ''
+        if (!ROUTE_RE.test(route)) return { status: 400, body: { error: '请先在左侧选中一个已保存的路由再测试' } }
+        const requested = Array.isArray(body.models)
+          ? [...new Set(body.models.filter(id => typeof id === 'string' && id.trim() !== '').map(id => id.trim()))]
+          : []
+        if (requested.length === 0) return { status: 400, body: { error: '请先勾选要测试的模型' } }
+        const settings = settingsOf()
+        if (settings === undefined) throw new Error('settings 服务不可用')
+        const ns = resolveNamespace(llm, settings)
+        const { providers } = readSection(settings, ns)
+        const saved = providers[route] && typeof providers[route] === 'object' ? providers[route] : undefined
+        if (saved === undefined) {
+          return { status: 400, body: { error: '路由「' + route + '」还没保存，先点「保存并启用」再测试' } }
+        }
+        const savedModels = Array.isArray(saved.models) ? saved.models : []
+        const configured = new Set(savedModels.map(model => model && typeof model.id === 'string' ? model.id : ''))
+        const missing = requested.filter(id => !configured.has(id))
+        let ensured = false
+        if (missing.length > 0 && body.ensure === true) {
+          // A chat call only resolves models the route already declares, so a
+          // freshly pulled model is unknown to the adapter until it is stored.
+          // Testing ensures them first rather than asking for a second click.
+          try {
+            const merged = [...savedModels.map(model => (model && typeof model.id === 'string' ? model : null)).filter(Boolean)]
+            for (const id of missing) {
+              if (merged.some(model => model.id === id)) continue
+              merged.push({ id, name: id })
+            }
+            await settings.mutate(ns, [{ op: 'set', path: ['providers', route, 'models'], value: merged }])
+            ensured = true
+          } catch { /* keep testing: the per-model error is still informative */ }
+        }
+        const results = []
+        for (const model of requested) {
+          const startedAt = Date.now()
+          try {
+            let sample = ''
+            const chunks = llm.stream({
+              provider: route,
+              model,
+              messages: [{ role: 'user', content: [{ type: 'text', text: TEST_PROMPT }] }],
+              signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+            })
+            for await (const chunk of chunks) {
+              const kind = chunk && typeof chunk === 'object' ? chunk.type : undefined
+              if (kind === 'text-delta') {
+                sample += typeof chunk.text === 'string' ? chunk.text : typeof chunk.delta === 'string' ? chunk.delta : ''
+                if (sample.length >= 24) break
+              }
+              if (kind === 'finish') {
+                // StreamChunk carries no error variant: a failed call ends with
+                // finish.reason.kind === 'error' | 'aborted' plus the failure.
+                const reason = chunk.reason && typeof chunk.reason === 'object' ? chunk.reason : {}
+                if (reason.kind === 'error' || reason.kind === 'aborted') {
+                  const failure = reason.failure && typeof reason.failure === 'object' ? reason.failure : {}
+                  const detail = typeof failure.message === 'string' && failure.message !== '' ? failure.message : '模型未返回内容（' + reason.kind + '）'
+                  throw new Error(detail)
+                }
+                break
+              }
+            }
+            results.push({ model, ok: true, ms: Date.now() - startedAt, sample: sample.trim().slice(0, 24) })
+          } catch (error) {
+            results.push({ model, ok: false, ms: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) })
+          }
+        }
+        return { body: { route, ensured, results } }
       }),
     },
     {

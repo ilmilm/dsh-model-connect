@@ -86,11 +86,19 @@ dsh plugin --profile desktop add C:\path\to\model-connect
 
 1. 左侧点「模型接入」；
 2. 填 **提供方 ID**（如 `myrelay`，只能字母数字点下划线连字符）、**显示名**、**Base URL**（如 `https://api.example.com/v1`）、**协议**；
-3. 填 **API Key**，点「探测模型」（**编辑已有路由时可留空**：探测会带上 `provider`，
+3. 填 **API Key**，点「**① 拉取模型**」（**编辑已有路由时可留空**：拉取会带上 `provider`，
    pi-ai 用该路由的 `<ROUTE>_API_KEY` 自行解析已保存的 Key；该路由确实没有 Key 时，
    面板直接提示引用名，而不是等端点回 401）；
-4. 勾选要启用的模型 → 保存；
-5. 保存后该路由在原 Models 设置页与模型选择器里立即可见。
+4. 拉取结果**默认一个都不勾**，需要哪些自己勾，或用「全选 / 全不选」批量操作；
+5. 点「加入已选」把勾中的模型放进上面的已选区；点错的按 `×` 单个删除，也可手输 ID 补充；
+6. 点「**② 测试已选模型**」逐条发一条纯文本测试消息，**只测已选区的模型**，结果逐行显示耗时与回复；
+7. 点「**③ 保存并启用**」，该路由在原 Models 设置页与模型选择器里立即可见。
+
+> 测试会先把「勾选但路由里还没有」的模型并入路由再发消息——pi-ai 只解析路由已声明的模型，
+> 不这么做的话新拉取的模型一律报 `no configured model`。返回里的 `ensured` 为 `true` 即表示补过。
+
+> 测试消息不是「你好」这类寒暄：它发的是 `Reply with the single word ok, nothing else.`，
+> 并在收到首个文本增量后立即断开，避免某些中转站对寒暄类探测的拦截，也几乎不耗额度。
 
 ### 模型能力默认值
 
@@ -114,6 +122,7 @@ dsh plugin --profile desktop add C:\path\to\model-connect
 | --- | --- | --- |
 | `GET` | `/model-connect/api/state` | 当前路由、模型清单、Key 配置状态、命名空间诊断 |
 | `POST` | `/model-connect/api/probe` | 用草稿端点 + Key 探测模型列表；带 `provider` 时沿用该路由已保存的 Key |
+| `POST` | `/model-connect/api/test` | 对指定路由的若干模型各发一条纯文本测试消息，逐条回 `{ ok, ms, sample/error }` |
 | `POST` | `/model-connect/api/save` | 新增 / 更新一条 provider 路由（并写 Key） |
 | `POST` | `/model-connect/api/remove` | 删除一条路由（可选连带删除 Key） |
 
