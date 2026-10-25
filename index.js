@@ -379,9 +379,34 @@ export function apply(ctx) {
         const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : ''
         const api = typeof body.api === 'string' && PROTOCOLS.includes(body.api) ? body.api : PROTOCOLS[0]
         const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim() !== '' ? body.apiKey.trim() : undefined
-        if (baseURL === '') return { status: 400, body: { error: '请先填写接口地址' } }
-        const ns = resolveNamespace(llm, settingsOf())
-        const models = await llm.discoverModels(ns, { baseURL, api, ...(apiKey === undefined ? {} : { apiKey }) }, AbortSignal.timeout(30000))
+        const provider = typeof body.provider === 'string' && ROUTE_RE.test(body.provider.trim()) ? body.provider.trim() : ''
+        if (baseURL === '' && provider === '') return { status: 400, body: { error: '请先填写接口地址' } }
+        const settings = settingsOf()
+        const ns = resolveNamespace(llm, settings)
+        if (provider !== '' && apiKey === undefined) {
+          // A blank key on an existing route means reuse the saved one: the
+          // adapter resolves that route's credential reference itself once it
+          // is told which route the draft edits, so only a route with no
+          // stored secret fails — and it fails before any network call.
+          const { providers } = readSection(settings, ns)
+          const stored = providers[provider] && typeof providers[provider] === 'object' ? providers[provider] : {}
+          const ref = typeof stored.apiKeyEnv === 'string' && stored.apiKeyEnv !== '' ? stored.apiKeyEnv : credentialRefOf(provider)
+          let configured = false
+          try {
+            const credentials = credentialsOf()
+            if (typeof credentials?.describe === 'function') configured = (await credentials.describe(ref))?.configured === true
+          } catch { /* unreadable credential: report it as missing */ }
+          if (!configured) {
+            return { status: 400, body: { error: '路由「' + provider + '」没有已保存的 Key（' + ref + '），请填写 API Key 后重试' } }
+          }
+        }
+        const request = {
+          api,
+          ...(baseURL === '' ? {} : { baseURL }),
+          ...(provider === '' ? {} : { provider }),
+          ...(apiKey === undefined ? {} : { apiKey }),
+        }
+        const models = await llm.discoverModels(ns, request, AbortSignal.timeout(30000))
         return {
           body: {
             models: (models ?? []).map(model => ({

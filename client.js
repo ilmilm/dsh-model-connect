@@ -449,7 +449,14 @@ window.__ModuleLoader__.load({
         setBusy('probe')
         setNotice(null)
         try {
-          const result = await call('POST', 'probe', { baseURL: draft.baseURL, api: draft.api, apiKey: draft.apiKey })
+          const result = await call('POST', 'probe', {
+            baseURL: draft.baseURL,
+            api: draft.api,
+            apiKey: draft.apiKey,
+            // Editing an existing route: name it so pi-ai resolves the stored
+            // <ROUTE>_API_KEY instead of demanding the value again.
+            ...(draft.editing ? { provider: draft.route.trim() } : {}),
+          })
           const models = Array.isArray(result.models) ? result.models : []
           setProbed(models)
           if (models.length > 0) patch({ models: models.map(model => model.id).join('\n') })
@@ -467,7 +474,7 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy('')
         }
-      }, [busy, draft.baseURL, draft.api, draft.apiKey, patch, zh])
+      }, [busy, draft.baseURL, draft.api, draft.apiKey, draft.editing, draft.route, patch, zh])
 
       const onSave = useCallback(async () => {
         if (busy !== '') return
